@@ -1,4 +1,8 @@
-import mongoose from 'mongoose';
+/**
+ * Importa la biblioteca de Mongoose.
+ * @type {mongoose}
+ */
+import mongoose from "mongoose";
 
 /**
  * Esquema de datos para un juez.
@@ -11,10 +15,10 @@ import mongoose from 'mongoose';
  * @type {import('mongoose').Model<Judge>}
  */
 const judgeSchema = mongoose.Schema({
-    name: {
-        type: String,
-        required: [true, 'El nombre es obligatorio'],
-    },
+  name: {
+    type: String,
+    required: [true, "El nombre es obligatorio"],
+  },
 });
 
 /**
@@ -22,6 +26,6 @@ const judgeSchema = mongoose.Schema({
  * @name Judge
  * @type {import('mongoose').Model<Judge>}
  */
-const Judge = mongoose.model('Judge', judgeSchema);
+const Judge = mongoose.model("Judge", judgeSchema);
 
 export default Judge;
