@@ -1,4 +1,4 @@
-import GamesService from "../services/GamesService.js";
+import GamesService from "../services/gamesService.js";
 
 /**
  * Obtiene la lista de todos los juegos.

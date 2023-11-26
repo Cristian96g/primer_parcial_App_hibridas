@@ -1,50 +1,71 @@
-import Vote from "../models/voteModels.js";
-import Judge from "../models/judgeModel.js";
-import Game from "../models/gameModels.js";
+import { MongoClient, ObjectId } from "mongodb";
 
-/**
- * Obtiene todos los votos.
- * @async
- * @function
- * @returns {Promise<Array>} Una promesa que se resuelve con un array de votos.
- * @throws {Error} Si hay un error al realizar la consulta.
- */
-async function getVotes() {
-  return await Vote.find({});
-}
+const client = new MongoClient("mongodb://127.0.0.1:27017");
+const db = client.db("parcial_1");
+const GameCollection = db.collection("votes");
 
-/**
- * Obtiene un voto por su ID, poblado con información del juez y el juego.
- * @async
- * @function
- * @param {string} id - ID del voto a buscar.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con el voto encontrado o null si no se encuentra.
- * @throws {Error} Si no se proporciona un ID o hay un error al realizar la consulta.
- */
-async function getVoteById(id) {
-  if (!id) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+function filterQueryToMongo(filter) {
+  const mongoFilter = {};
+
+  for (const field in filter) {
+    if (isNaN(filter[field])) {
+      mongoFilter[field] = filter[field];
+    } else {
+      const [fieldName, op] = field.split("_");
+
+      if (!op) {
+        mongoFilter[fieldName] = parseInt(filter[field]);
+      } else if (op === "min") {
+        mongoFilter[fieldName] = { $gte: parseInt(filter[field]) };
+      } else if (op === "max") {
+        mongoFilter[fieldName] = { $lte: parseInt(filter[field]) };
+      }
+    }
   }
 
-  return await Vote.findById(id)
-    .populate({ path: "judge_id", select: "name" })
-    .populate({ path: "game_id", select: "name" });
+  return mongoFilter;
 }
 
-/**
- * Crea un nuevo voto y lo guarda en la base de datos.
- * @async
- * @function
- * @param {Object} voteData - Datos del voto a crear.
- * @param {string} voteData.judge_id - ID del juez que emite el voto.
- * @param {string} voteData.game_id - ID del juego al que se le asigna el voto.
- * @param {number} voteData.jugabilidad - Puntuación de jugabilidad.
- * @param {number} voteData.arte - Puntuación de arte.
- * @param {number} voteData.sonido - Puntuación de sonido.
- * @param {number} voteData.afinidad_tematica - Puntuación de afinidad temática.
- * @returns {Promise<Object>} Una promesa que se resuelve con un objeto que indica el resultado de la operación.
- * @throws {Error} Si no se proporcionan todos los datos requeridos o si ya existe un voto para el mismo juez y juego.
- */
+async function getVotes(filter = {}) {
+  await client.connect();
+
+  const mongoFilter = filterQueryToMongo(filter);
+
+  return await GameCollection.find(mongoFilter).toArray();
+}
+
+async function getVoteById(id) {
+  // Conectar a la base de datos
+  await client.connect();
+
+  // Obtener el voto por ID
+  const vote = await db.collection("votes").findOne({ _id: new ObjectId(id) });
+
+  if (!vote) {
+    return null; // o manejar el error según tu lógica
+  }
+
+  // Obtener información del juez
+  const judge = await db
+    .collection("judges")
+    .findOne({ _id: new ObjectId(vote.judge_id) });
+
+  // Obtener información del juego
+  const game = await db
+    .collection("games")
+    .findOne({ _id: new ObjectId(vote.game_id) });
+
+  return {
+    _id: vote._id,
+    jugabilidad: vote.jugabilidad,
+    arte: vote.arte,
+    sonido: vote.sonido,
+    afinidad_tematica: vote.afinidad_tematica,
+    judge: { _id: judge._id, name: judge.name }, // Información del juez
+    game: { _id: game._id, name: game.name }, // Información del juego
+  };
+}
+
 async function postVote({
   judge_id,
   game_id,
@@ -64,16 +85,13 @@ async function postVote({
     return null; // o lanzar una excepción según tu lógica de manejo de errores
   }
 
-  const existVote = await Vote.findOne({ judge_id, game_id });
+  // Conectar a la base de datos
+  await client.connect();
 
-  if (existVote) {
-    return {
-      success: false,
-      message: "El juez ya emitió un voto para este juego",
-    };
-  }
-
-  const judge = await Judge.findById(judge_id);
+  // Verificar que el juez exista
+  const judge = await db
+    .collection("judges")
+    .findOne({ _id: new ObjectId(judge_id) });
 
   if (!judge) {
     return {
@@ -82,7 +100,10 @@ async function postVote({
     };
   }
 
-  const game = await Game.findById(game_id);
+  // Verificar que el juego exista
+  const game = await db
+    .collection("games")
+    .findOne({ _id: new ObjectId(game_id) });
   if (!game) {
     return {
       success: false,
@@ -90,16 +111,27 @@ async function postVote({
     };
   }
 
-  const vote = new Vote({
+  // Verificar que el juez no haya votado por el juego
+  const existVote = await db.collection("votes").findOne({ judge_id, game_id });
+
+  if (existVote) {
+    return {
+      success: false,
+      message: "El juez ya emitió un voto para este juego",
+    };
+  }
+
+  // Crear el voto
+  const vote = {
     judge_id,
     game_id,
     jugabilidad,
     arte,
     sonido,
     afinidad_tematica,
-  });
+  };
 
-  await vote.save();
+  await db.collection("votes").insertOne(vote);
 
   return {
     success: true,

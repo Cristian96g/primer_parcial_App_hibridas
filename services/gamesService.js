@@ -1,35 +1,81 @@
-import Game from "../models/gameModels.js";
-import Vote from "../models/voteModels.js";
+import { MongoClient, ObjectId } from "mongodb";
 
 /**
- * Obtiene la lista de todos los juegos.
- *
- * @async
- * @function
- * @returns {Promise<Array>} Una promesa que se resuelve con un array de juegos.
- * @throws {Error} Si hay un error al realizar la consulta.
+ * Cliente MongoDB utilizado para la conexión a la base de datos.
+ * @type {MongoClient}
  */
-async function getGames() {
-  return await Game.find({});
+const client = new MongoClient('mongodb://127.0.0.1:27017');
+
+/**
+ * Objeto de base de datos MongoDB.
+ * @type {import('mongodb').Db}
+ */
+const db = client.db('parcial_1');
+
+/**
+ * Colección de juegos en la base de datos.
+ * @type {import('mongodb').Collection}
+ */
+const GameCollection = db.collection('games');
+
+/**
+ * Convierte un objeto de filtro en un objeto de filtro compatible con MongoDB.
+ * @param {Object} filter - Objeto de filtro.
+ * @returns {Object} Objeto de filtro compatible con MongoDB.
+ */
+function filterQueryToMongo(filter) {
+  const mongoFilter = {};
+
+  for (const field in filter) {
+    if (isNaN(filter[field])) {
+      mongoFilter[field] = filter[field];
+    } else {
+      const [fieldName, op] = field.split('_');
+
+      if (!op) {
+        mongoFilter[fieldName] = parseInt(filter[field]);
+      } else if (op === 'min') {
+        mongoFilter[fieldName] = { $gte: parseInt(filter[field]) };
+      } else if (op === 'max') {
+        mongoFilter[fieldName] = { $lte: parseInt(filter[field]) };
+      }
+    }
+  }
+
+  return mongoFilter;
 }
 
 /**
- * Obtiene las votaciones para un juego específico, incluyendo información del juez.
- *
- * @async
- * @function
- * @param {string} gameId - ID del juego para el cual se obtienen las votaciones.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con un objeto que contiene el nombre del juego y las votaciones formateadas o null si no se encuentra el juego.
- * @throws {Error} Si no se proporciona un ID de juego o hay un error al realizar la consulta.
+ * Obtiene la lista de juegos filtrados según los criterios proporcionados.
+ * @param {Object} [filter={}] - Criterios de filtrado.
+ * @returns {Promise<Object[]>} Lista de juegos.
+ */
+async function getGames(filter = {}) {
+  await client.connect();
+
+  const mongoFilter = filterQueryToMongo(filter);
+
+  return await GameCollection.find(mongoFilter).toArray();
+}
+
+/**
+ * Obtiene los votos de un juego por su ID.
+ * @param {string} gameId - ID del juego.
+ * @returns {Promise<Object|null>} Objeto que contiene los votos del juego o nulo si el juego no existe.
  */
 async function getVotesForGame(gameId) {
-  const game = await Game.findById(gameId);
+  await client.connect();
+
+  const game = GameCollection.findOne({ _id: ObjectId(gameId) });
 
   if (!game) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  const votes = await Vote.find({ game_id: gameId }).populate("judge_id");
+  // Obtener los votos para el juego
+  const votes = await db.collection('votes').find({ game_id: gameId }).toArray();
+
+  // Formatear los votos
   const formattedVotes = votes.map((vote) => ({
     judge_name: vote.judge_id.name,
     jugabilidad: vote.jugabilidad,
@@ -46,23 +92,21 @@ async function getVotesForGame(gameId) {
 
 /**
  * Obtiene la lista de juegos ordenada por puntuación en una edición específica.
- *
- * @async
- * @function
- * @param {string} edition - Edición para la cual se desea obtener la lista de juegos ordenada por puntuación.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con un objeto que contiene la lista de juegos ordenada por puntuación o null si no se proporciona una edición.
- * @throws {Error} Si hay un error al realizar la consulta.
+ * @param {string} edition - Edición de los juegos.
+ * @returns {Promise<Object|null>} Lista de juegos ordenada por puntuación o nulo si no se proporciona la edición.
  */
 async function getGamesSortedByScore(edition) {
+  await client.connect();
+
   if (!edition) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  const games = await Game.find({ edition: edition });
+  const games = await GameCollection.find({ edition: edition }).toArray();
 
   for (const game of games) {
     game.score = 0;
-    const votes = await Vote.find({ game_id: game.id });
+    const votes = await db.collection('votes').find({ game_id: game._id }).toArray();
 
     if (votes.length > 0) {
       for (const vote of votes) {
@@ -78,22 +122,20 @@ async function getGamesSortedByScore(edition) {
 }
 
 /**
- * Obtiene el puntaje promedio de un juego específico.
- *
- * @async
- * @function
- * @param {string} gameId - ID del juego para el cual se desea obtener el puntaje promedio.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con un objeto que contiene el juego y su puntaje promedio o null si no se encuentra el juego.
- * @throws {Error} Si no se proporciona un ID de juego o hay un error al realizar la consulta.
+ * Obtiene el promedio de puntuación de un juego.
+ * @param {string} gameId - ID del juego.
+ * @returns {Promise<Object|null>} Información del juego con su promedio de puntuación o nulo si el juego no existe.
  */
 async function getAverageScoreForGame(gameId) {
-  const game = await Game.findById(gameId);
+  await client.connect();
+
+  const game = await GameCollection.findOne({ _id: ObjectId(gameId) });
 
   if (!game) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  const votes = await Vote.find({ game_id: gameId });
+  const votes = await db.collection('votes').find({ game_id: gameId }).toArray();
 
   if (votes.length === 0) {
     return {
@@ -132,25 +174,19 @@ async function getAverageScoreForGame(gameId) {
 }
 
 /**
- * Crea un nuevo juego y lo guarda en la base de datos.
- *
- * @async
- * @function
- * @param {Object} gameData - Datos del juego a crear.
- * @param {string} gameData.name - Nombre del juego.
- * @param {string} gameData.genre - Género del juego.
- * @param {number} gameData.members - Número de miembros del juego.
- * @param {string} gameData.edition - Edición del juego.
- * @returns {Promise<Object>} Una promesa que se resuelve con un objeto que indica el resultado de la operación.
- * @throws {Error} Si no se proporcionan todos los datos requeridos.
+ * Crea un nuevo juego en la base de datos.
+ * @param {Object} game - Información del juego a crear.
+ * @returns {Promise<Object|null>} Resultado de la operación de creación o nulo si falta información del juego.
  */
 async function postGame({ name, genre, members, edition }) {
+  await client.connect();
+
   if (!name || !genre || !members || !edition) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  const game = new Game({ name, genre, members, edition });
-  await game.save();
+  const game = { name, genre, members, edition };
+  await GameCollection.insertOne(game);
 
   return {
     success: true,
@@ -160,20 +196,18 @@ async function postGame({ name, genre, members, edition }) {
 }
 
 /**
- * Elimina un juego por su ID de la base de datos.
- *
- * @async
- * @function
+ * Elimina un juego por su ID.
  * @param {string} id - ID del juego a eliminar.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con un objeto que indica el resultado de la operación o null si no se proporciona un ID de juego.
- * @throws {Error} Si hay un error al realizar la consulta.
+ * @returns {Promise<Object|null>} Resultado de la operación de eliminación o nulo si no se proporciona el ID.
  */
 async function deleteGame(id) {
+  await client.connect();
+
   if (!id) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  await Game.findByIdAndDelete(id);
+  await GameCollection.deleteOne({ _id: new ObjectId(id) });
 
   return {
     success: true,
@@ -182,25 +216,34 @@ async function deleteGame(id) {
 }
 
 /**
- * Actualiza un juego por su ID en la base de datos.
- *
- * @async
- * @function
+ * Actualiza la información de un juego por su ID.
  * @param {string} id - ID del juego a actualizar.
- * @param {Object} gameData - Datos actualizados del juego.
- * @param {string} gameData.name - Nuevo nombre del juego.
- * @param {string} gameData.genre - Nuevo género del juego.
- * @param {number} gameData.members - Nuevo número de miembros del juego.
- * @param {string} gameData.edition - Nueva edición del juego.
- * @returns {Promise<Object|null>} Una promesa que se resuelve con un objeto que indica el resultado de la operación o null si no se proporciona un ID de juego.
- * @throws {Error} Si hay un error al realizar la consulta.
+ * @param {Object} update - Información actualizada del juego.
+ * @returns {Promise<Object|null>} Resultado de la operación de actualización o nulo si no se proporciona el ID.
  */
 async function updateGame(id, { name, genre, members, edition }) {
+  await client.connect();
+
   if (!id) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  await Game.findByIdAndUpdate(id, { name, genre, members, edition });
+  const updateFields = {};
+
+  if (name) {
+    updateFields.name = name;
+  }
+  if (genre) {
+    updateFields.genre = genre;
+  }
+  if (members) {
+    updateFields.members = members;
+  }
+  if (edition) {
+    updateFields.edition = edition;
+  }
+
+  await GameCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
 
   return {
     success: true,
@@ -208,9 +251,6 @@ async function updateGame(id, { name, genre, members, edition }) {
   };
 }
 
-/**
- * Exporta las funciones del servicio de juegos.
- */
 export default {
   getGames,
   getVotesForGame,

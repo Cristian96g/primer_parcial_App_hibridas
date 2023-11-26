@@ -1,31 +1,7 @@
-/**
- * Importa la biblioteca de Mongoose.
- * @type {mongoose}
- */
-import mongoose from "mongoose";
+import yup from "yup";
 
-/**
- * Esquema de datos para un juez.
- * @typedef {Object} JudgeSchema
- * @property {string} name - El nombre del juez.
- */
-
-/**
- * Definición del esquema y el modelo de juez.
- * @type {import('mongoose').Model<Judge>}
- */
-const judgeSchema = mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, "El nombre es obligatorio"],
-  },
+const judgeSchema = yup.object({
+  name: yup.string().min(3, "Ingrese mas de 3 letras").required(),
 });
 
-/**
- * Modelo de juez.
- * @name Judge
- * @type {import('mongoose').Model<Judge>}
- */
-const Judge = mongoose.model("Judge", judgeSchema);
-
-export default Judge;
+export default judgeSchema;

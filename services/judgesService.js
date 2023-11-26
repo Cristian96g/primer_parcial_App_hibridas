@@ -1,74 +1,147 @@
-import Judge from "../models/judgeModel.js";
-import Vote from "../models/voteModels.js";
+import { MongoClient, ObjectId } from "mongodb";
 
 /**
- * Obtiene todos los jueces.
- * @async
- * @function
- * @returns {Promise<Array>} - Una promesa que se resuelve con un array de jueces.
+ * Cliente MongoDB utilizado para la conexión a la base de datos.
+ * @type {MongoClient}
  */
-async function getJudges() {
-  return await Judge.find({});
+const client = new MongoClient("mongodb://127.0.0.1:27017");
+
+/**
+ * Objeto de base de datos MongoDB.
+ * @type {import('mongodb').Db}
+ */
+const db = client.db("parcial_1");
+
+/**
+ * Colección de jueces en la base de datos.
+ * @type {import('mongodb').Collection}
+ */
+const JudgeCollection = db.collection("judges");
+
+/**
+ * Convierte un objeto de filtro en un objeto de filtro compatible con MongoDB.
+ * @param {Object} filter - Objeto de filtro.
+ * @returns {Object} Objeto de filtro compatible con MongoDB.
+ */
+function filterQueryToMongo(filter) {
+  const mongoFilter = {};
+
+  for (const field in filter) {
+    if (isNaN(filter[field])) {
+      mongoFilter[field] = filter[field];
+    } else {
+      const [fieldName, op] = field.split("_");
+
+      if (!op) {
+        mongoFilter[fieldName] = parseInt(filter[field]);
+      } else if (op === "min") {
+        mongoFilter[fieldName] = { $gte: parseInt(filter[field]) };
+      } else if (op === "max") {
+        mongoFilter[fieldName] = { $lte: parseInt(filter[field]) };
+      }
+    }
+  }
+
+  return mongoFilter;
 }
 
 /**
- * Obtiene los votos de un juez por ID.
- * @async
- * @function
- * @param {string} id - El ID del juez.
- * @returns {Promise<Object>} - Una promesa que se resuelve con un objeto que contiene los votos del juez.
+ * Obtiene la lista de jueces filtrados según los criterios proporcionados.
+ * @param {Object} [filter={}] - Criterios de filtrado.
+ * @returns {Promise<Object[]>} Lista de jueces.
  */
-async function getJudgeVotes(id) {
-  if (!id) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+async function getJudges(filter = {}) {
+  await client.connect();
+
+  const mongoFilter = filterQueryToMongo(filter);
+
+  return await JudgeCollection.find(mongoFilter).toArray();
+}
+
+/**
+ * Obtiene los votos de un juez por su ID.
+ * @param {string} judgeId - ID del juez.
+ * @returns {Promise<Object>} Objeto que contiene los votos del juez.
+ */
+async function getJudgeVotes(judgeId) {
+  await client.connect();
+
+  const db = client.db("nombre_de_tu_base_de_datos");
+
+  if (!judgeId) {
+    return { success: false, message: "ID del juez no proporcionado" };
   }
 
-  const judgeVotes = await Vote.find({ judge_id: id })
-    .populate({ path: "game_id", select: "name" })
-    .select("game_id jugabilidad arte sonido afinidad_tematica");
+  // Obtener los votos del juez
+  const judgeVotes = await db
+    .collection("votes")
+    .find({ judge_id: new ObjectId(judgeId) })
+    .project({
+      game_id: 1,
+      jugabilidad: 1,
+      arte: 1,
+      sonido: 1,
+      afinidad_tematica: 1,
+    })
+    .toArray();
+
+  // Poblar la información de los juegos referenciados
+  const populatedVotes = await Promise.all(
+    judgeVotes.map(async (vote) => {
+      const game = await db
+        .collection("games")
+        .findOne({ _id: new ObjectId(vote.game_id) });
+      return {
+        game: { _id: game._id, name: game.name },
+        jugabilidad: vote.jugabilidad,
+        arte: vote.arte,
+        sonido: vote.sonido,
+        afinidad_tematica: vote.afinidad_tematica,
+      };
+    })
+  );
 
   return {
     success: true,
-    judgeVotes,
+    judgeVotes: populatedVotes,
   };
 }
 
 /**
- * Crea un nuevo juez.
- * @async
- * @function
- * @param {Object} param0 - Un objeto que contiene el nombre del juez.
- * @param {string} param0.name - El nombre del juez.
- * @returns {Promise<Object|null>} - Una promesa que se resuelve con el juez creado o null si no se proporciona un nombre.
+ * Crea un nuevo juez en la base de datos.
+ * @param {Object} judge - Información del juez a crear.
+ * @returns {Promise<Object>} Resultado de la operación de creación.
  */
-async function postJudge({ name }) {
-  if (!name) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
-  }
+async function postJudge(judge) {
+  await client.connect();
 
-  const judge = new Judge({ name });
-  await judge.save();
+  if (!judge) {
+    return null;
+  }
+  const newJudge = { ...judge };
+
+  await JudgeCollection.insertOne(judge);
 
   return {
     success: true,
     message: "Juez creado exitosamente",
-    judge,
+    newJudge,
   };
 }
 
 /**
- * Elimina un juez por ID.
- * @async
- * @function
- * @param {string} id - El ID del juez.
- * @returns {Promise<Object|null>} - Una promesa que se resuelve con un objeto que indica el éxito de la operación o null si no se proporciona un ID.
+ * Elimina un juez por su ID.
+ * @param {string} id - ID del juez a eliminar.
+ * @returns {Promise<Object>} Resultado de la operación de eliminación.
  */
 async function deleteJudge(id) {
+  await client.connect();
+
   if (!id) {
-    return null; // o lanzar una excepción según tu lógica de manejo de errores
+    return null;
   }
 
-  await Judge.findByIdAndDelete(id);
+  await JudgeCollection.deleteOne({ _id: new ObjectId(id) });
 
   return {
     success: true,
@@ -77,20 +150,18 @@ async function deleteJudge(id) {
 }
 
 /**
- * Actualiza un juez por ID.
- * @async
- * @function
- * @param {string} id - El ID del juez.
- * @param {Object} param1 - Un objeto que contiene el nuevo nombre del juez.
- * @param {string} param1.name - El nuevo nombre del juez.
- * @returns {Promise<Object|null>} - Una promesa que se resuelve con un objeto que indica el éxito de la operación o null si no se proporciona un ID.
+ * Actualiza la información de un juez por su ID.
+ * @param {string} id - ID del juez a actualizar.
+ * @param {Object} update - Información actualizada del juez.
+ * @returns {Promise<Object>} Resultado de la operación de actualización.
  */
 async function updateJudge(id, { name }) {
+  await client.connect();
   if (!id) {
     return null; // o lanzar una excepción según tu lógica de manejo de errores
   }
 
-  await Judge.findByIdAndUpdate(id, { name });
+  await JudgeCollection.updateOne({ _id: new ObjectId(id) }, { $set: { name: name } });
 
   return {
     success: true,
